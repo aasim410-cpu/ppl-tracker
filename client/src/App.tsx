@@ -2,12 +2,15 @@ import { Switch, Route, Router, Link, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
+import { AuthProvider, useAuth } from "./lib/auth";
 import { Toaster } from "@/components/ui/toaster";
-import { Dumbbell, ArrowUp, ArrowDown, Footprints, BarChart3 } from "lucide-react";
+import { Dumbbell, ArrowUp, ArrowDown, Footprints, BarChart3, LogOut, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import PushDay from "./pages/push-day";
 import PullDay from "./pages/pull-day";
 import LegsDay from "./pages/legs-day";
 import Aggregate from "./pages/aggregate";
+import AuthPage from "./pages/auth-page";
 import NotFound from "./pages/not-found";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
@@ -49,19 +52,40 @@ function Navigation() {
 }
 
 function AppHeader() {
+  const { user, logout } = useAuth();
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80">
-      <div className="flex items-center gap-3 max-w-4xl mx-auto px-4 h-14">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
-          <Dumbbell className="w-4 h-4" />
+      <div className="flex items-center justify-between max-w-4xl mx-auto px-4 h-14">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground">
+            <Dumbbell className="w-4 h-4" />
+          </div>
+          <h1 className="text-base font-semibold tracking-tight">PPL Tracker</h1>
         </div>
-        <h1 className="text-base font-semibold tracking-tight">PPL Tracker</h1>
+        {user && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <User className="w-3 h-3" />
+              {user.username}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              onClick={logout}
+              data-testid="logout-btn"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
       </div>
     </header>
   );
 }
 
-function AppContent() {
+function AuthenticatedApp() {
   return (
     <div className="min-h-screen pb-20">
       <AppHeader />
@@ -83,12 +107,35 @@ function AppContent() {
   );
 }
 
+function AppContent() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <Dumbbell className="w-5 h-5 animate-pulse" />
+          <span className="text-sm">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  return <AuthenticatedApp />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Router hook={useHashLocation}>
-        <AppContent />
-      </Router>
+      <AuthProvider>
+        <Router hook={useHashLocation}>
+          <AppContent />
+        </Router>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
