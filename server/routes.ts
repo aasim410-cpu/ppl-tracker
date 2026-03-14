@@ -118,6 +118,26 @@ export async function registerRoutes(server: Server, app: Express) {
     res.json(logs);
   });
 
+  // Get last log for an exercise (progressive overload)
+  app.get("/api/logs/last/:exerciseId", requireAuth, async (req, res) => {
+    const excludeDate = req.query.excludeDate as string | undefined;
+    const log = await storage.getLastLog((req as any).userId, req.params.exerciseId, excludeDate);
+    res.json(log);
+  });
+
+  // Get PR (max weight) for an exercise
+  app.get("/api/logs/pr/:exerciseId", requireAuth, async (req, res) => {
+    const maxWeight = await storage.getPR((req as any).userId, req.params.exerciseId);
+    res.json({ maxWeight });
+  });
+
+  // Get last session logs for a day type (repeat last session)
+  app.get("/api/logs/last-session/:dayType", requireAuth, async (req, res) => {
+    const excludeDate = req.query.excludeDate as string | undefined;
+    const logs = await storage.getLastSession((req as any).userId, req.params.dayType, excludeDate);
+    res.json(logs);
+  });
+
   // Create a workout log
   app.post("/api/logs", requireAuth, async (req, res) => {
     const parsed = insertWorkoutLogSchema.safeParse(req.body);
@@ -128,9 +148,68 @@ export async function registerRoutes(server: Server, app: Express) {
     res.status(201).json(log);
   });
 
+  // Update a workout log
+  app.put("/api/logs/:id", requireAuth, async (req, res) => {
+    const { sets, reps, weight, rpe } = req.body;
+    const updated = await storage.updateWorkoutLog((req as any).userId, req.params.id, { sets, reps, weight, rpe });
+    if (!updated) {
+      return res.status(404).json({ error: "Log not found" });
+    }
+    res.json(updated);
+  });
+
   // Delete a workout log
   app.delete("/api/logs/:id", requireAuth, async (req, res) => {
     await storage.deleteWorkoutLog((req as any).userId, req.params.id);
     res.status(204).send();
+  });
+
+  // Session notes
+  app.get("/api/notes/:date/:dayType", requireAuth, async (req, res) => {
+    const note = await storage.getSessionNote((req as any).userId, req.params.date, req.params.dayType);
+    res.json(note);
+  });
+
+  app.put("/api/notes/:date/:dayType", requireAuth, async (req, res) => {
+    const { notes } = req.body;
+    if (typeof notes !== "string") {
+      return res.status(400).json({ error: "notes field required" });
+    }
+    const note = await storage.upsertSessionNote((req as any).userId, req.params.date, req.params.dayType, notes);
+    res.json(note);
+  });
+
+  // Body weight
+  app.get("/api/bodyweight", requireAuth, async (req, res) => {
+    const entries = await storage.getBodyWeights((req as any).userId);
+    res.json(entries);
+  });
+
+  app.post("/api/bodyweight", requireAuth, async (req, res) => {
+    const { date, weight } = req.body;
+    if (!date || weight === undefined || weight === null) {
+      return res.status(400).json({ error: "date and weight required" });
+    }
+    const entry = await storage.createBodyWeight((req as any).userId, date, Number(weight));
+    res.status(201).json(entry);
+  });
+
+  app.delete("/api/bodyweight/:id", requireAuth, async (req, res) => {
+    await storage.deleteBodyWeight((req as any).userId, Number(req.params.id));
+    res.status(204).send();
+  });
+
+  // CSV Export
+  app.get("/api/export/csv", requireAuth, async (req, res) => {
+    const logs = await storage.getWorkoutLogs((req as any).userId);
+    const header = "date,dayType,exerciseName,sets,reps,weight,rpe";
+    const rows = logs.map(l => {
+      const name = l.exerciseName.includes(",") ? `"${l.exerciseName}"` : l.exerciseName;
+      return `${l.date},${l.dayType},${name},${l.sets},${l.reps},${l.weight},${l.rpe}`;
+    });
+    const csv = [header, ...rows].join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=ppl-tracker-export.csv");
+    res.send(csv);
   });
 }

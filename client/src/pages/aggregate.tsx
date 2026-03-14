@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { Dumbbell, TrendingUp, CalendarDays, Flame, ArrowUp, ArrowDown, Footprints } from "lucide-react";
+import { Dumbbell, TrendingUp, CalendarDays, Flame, ArrowUp, ArrowDown, Footprints, Download } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 import type { WorkoutLog } from "@shared/schema";
 
 type TimeRange = "7d" | "30d" | "all";
@@ -147,7 +148,7 @@ export default function Aggregate() {
         <p className="text-xs text-muted-foreground mt-0.5">Aggregate workout data</p>
       </div>
 
-      <div className="flex gap-1.5">
+      <div className="flex gap-1.5 items-center">
         {(["7d", "30d", "all"] as TimeRange[]).map((r) => (
           <Button
             key={r}
@@ -160,6 +161,30 @@ export default function Aggregate() {
             {r === "7d" ? "7 Days" : r === "30d" ? "30 Days" : "All Time"}
           </Button>
         ))}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs px-3 ml-auto gap-1.5"
+          onClick={async () => {
+            try {
+              const res = await apiRequest("GET", "/api/export/csv");
+              const text = await res.text();
+              const blob = new Blob([text], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "ppl-tracker-export.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch {
+              // silently fail
+            }
+          }}
+          data-testid="export-csv"
+        >
+          <Download className="w-3 h-3" />
+          Export CSV
+        </Button>
       </div>
 
       {!stats ? (

@@ -30,6 +30,23 @@ export interface Exercise {
   videoId: string;
 }
 
+// Session notes
+export interface SessionNote {
+  id: number;
+  userId: number;
+  date: string;
+  dayType: string;
+  notes: string;
+}
+
+// Body weight tracking
+export interface BodyWeight {
+  id: number;
+  userId: number;
+  date: string;
+  weight: number;
+}
+
 export const exercises: Exercise[] = [
   // PUSH DAY
   {
