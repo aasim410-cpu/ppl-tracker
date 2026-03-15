@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
+import { UnitProvider, useUnit } from "./lib/unit";
 import { RestTimerProvider } from "./components/rest-timer";
 import { Toaster } from "@/components/ui/toaster";
 import { Dumbbell, ArrowUp, ArrowDown, Footprints, BarChart3, LogOut, User, Scale, Sun, Moon } from "lucide-react";
@@ -70,6 +71,21 @@ function ThemeToggle() {
   );
 }
 
+function UnitToggle() {
+  const { unit, toggleUnit } = useUnit();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-1.5 text-[10px] font-bold text-muted-foreground hover:text-foreground"
+      onClick={toggleUnit}
+      data-testid="unit-toggle"
+    >
+      {unit}
+    </Button>
+  );
+}
+
 function AppHeader() {
   const { user, logout } = useAuth();
 
@@ -88,6 +104,7 @@ function AppHeader() {
               <User className="w-3 h-3" />
               {user.username}
             </span>
+            <UnitToggle />
             <ThemeToggle />
             <Button
               variant="ghost"
@@ -154,11 +171,13 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <Router hook={useHashLocation}>
-            <RestTimerProvider>
-              <AppContent />
-            </RestTimerProvider>
-          </Router>
+          <UnitProvider>
+            <Router hook={useHashLocation}>
+              <RestTimerProvider>
+                <AppContent />
+              </RestTimerProvider>
+            </Router>
+          </UnitProvider>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

@@ -1,21 +1,57 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { format, subDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, parseISO } from "date-fns";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { format, subDays, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
-import { Dumbbell, TrendingUp, CalendarDays, Flame, ArrowUp, ArrowDown, Footprints, Download } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, LineChart, Line } from "recharts";
+import { Dumbbell, TrendingUp, CalendarDays, Flame, ArrowUp, ArrowDown, Footprints, Download, Settings } from "lucide-react";
+import { useUnit } from "@/lib/unit";
 import type { WorkoutLog } from "@shared/schema";
+import { exercises } from "@shared/schema";
 
 type TimeRange = "7d" | "30d" | "all";
 
 export default function Aggregate() {
+  const { displayWeight, unitLabel } = useUnit();
   const [range, setRange] = useState<TimeRange>("30d");
   const [calMonth, setCalMonth] = useState<Date>(new Date());
+  const [goalInput, setGoalInput] = useState("");
+  const [selectedExercise, setSelectedExercise] = useState(exercises[0].id);
+
+  // Streak data
+  const { data: streakData } = useQuery<{ currentStreak: number; thisWeekCount: number; weeklyGoal: number }>({
+    queryKey: ["/api/stats/streak"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/stats/streak");
+      return res.json();
+    },
+  });
+
+  // Update weekly goal
+  const goalMutation = useMutation({
+    mutationFn: async (weeklyGoal: number) => {
+      await apiRequest("PUT", "/api/settings", { weeklyGoal });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stats/streak"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+    },
+  });
+
+  // E1RM data for selected exercise
+  const { data: e1rmData = [] } = useQuery<{ date: string; e1rm: number }[]>({
+    queryKey: ["/api/stats/e1rm", selectedExercise],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/stats/e1rm/${selectedExercise}`);
+      return res.json();
+    },
+  });
 
   const startDate = range === "7d"
     ? format(subDays(new Date(), 7), "yyyy-MM-dd")
@@ -187,6 +223,109 @@ export default function Aggregate() {
         </Button>
       </div>
 
+      {/* Streaks & Weekly Goal */}
+      {streakData && (
+        <Card className="p-4" data-testid="streak-card">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Flame className={`w-5 h-5 ${streakData.currentStreak > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
+              <div>
+                <p className="text-sm font-semibold">{streakData.currentStreak} week streak</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {streakData.thisWeekCount}/{streakData.weeklyGoal} workouts this week
+                </p>
+              </div>
+            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" data-testid="goal-settings">
+                  <Settings className="w-3.5 h-3.5 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-3" align="end">
+                <p className="text-xs font-semibold mb-2">Weekly Goal</p>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={7}
+                    placeholder={String(streakData.weeklyGoal)}
+                    value={goalInput}
+                    onChange={e => setGoalInput(e.target.value)}
+                    className="h-8 text-xs"
+                    data-testid="goal-input"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => {
+                      const val = Number(goalInput);
+                      if (val >= 1 && val <= 7) {
+                        goalMutation.mutate(val);
+                        setGoalInput("");
+                      }
+                    }}
+                    disabled={goalMutation.isPending}
+                    data-testid="goal-save"
+                  >
+                    Save
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+          {/* Progress bar */}
+          <div className="h-2 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full rounded-full bg-orange-500 transition-all"
+              style={{ width: `${Math.min(100, (streakData.thisWeekCount / streakData.weeklyGoal) * 100)}%` }}
+            />
+          </div>
+        </Card>
+      )}
+
+      {/* Estimated 1RM Chart */}
+      <Card className="p-4" data-testid="e1rm-card">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-semibold">Estimated 1RM ({unitLabel})</p>
+          <Select value={selectedExercise} onValueChange={setSelectedExercise}>
+            <SelectTrigger className="h-7 w-[180px] text-xs" data-testid="e1rm-exercise-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {exercises.map(ex => (
+                <SelectItem key={ex.id} value={ex.id} className="text-xs">
+                  {ex.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {e1rmData.length > 0 ? (
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={e1rmData.map(d => ({ date: format(parseISO(d.date), "MMM d"), e1rm: displayWeight(d.e1rm) }))}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" domain={["dataMin - 5", "dataMax + 5"]} />
+                <Tooltip
+                  formatter={(value: number) => `${value} ${unitLabel}`}
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                />
+                <Line type="monotone" dataKey="e1rm" stroke="hsl(210, 70%, 55%)" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground text-center py-6">No data yet for this exercise.</p>
+        )}
+      </Card>
+
       {!stats ? (
         <Card className="p-8 text-center">
           <Dumbbell className="w-8 h-8 mx-auto text-muted-foreground/40 mb-3" />
@@ -198,7 +337,7 @@ export default function Aggregate() {
           <div className="grid grid-cols-2 gap-3">
             <Card className="p-3">
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total Volume</p>
-              <p className="text-lg font-bold mt-0.5">{stats.totalVolume.toLocaleString()} kg</p>
+              <p className="text-lg font-bold mt-0.5">{Math.round(displayWeight(stats.totalVolume)).toLocaleString()} {unitLabel}</p>
             </Card>
             <Card className="p-3">
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Workout Days</p>
@@ -245,7 +384,7 @@ export default function Aggregate() {
           {/* Volume over time chart */}
           {stats.volumeOverTime.length > 1 && (
             <Card className="p-4">
-              <p className="text-xs font-semibold mb-3">Volume Over Time (kg)</p>
+              <p className="text-xs font-semibold mb-3">Volume Over Time ({unitLabel})</p>
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={stats.volumeOverTime} barGap={0}>
@@ -289,7 +428,7 @@ export default function Aggregate() {
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(value: number) => `${value.toLocaleString()} kg`}
+                    formatter={(value: number) => `${Math.round(displayWeight(value)).toLocaleString()} ${unitLabel}`}
                     contentStyle={{
                       backgroundColor: "hsl(var(--card))",
                       border: "1px solid hsl(var(--border))",
@@ -320,7 +459,7 @@ export default function Aggregate() {
                     {dayTypeIcon(ex.dayType)}
                     <span className="font-medium">{ex.name}</span>
                   </div>
-                  <span className="text-muted-foreground">{ex.volume.toLocaleString()} kg</span>
+                  <span className="text-muted-foreground">{Math.round(displayWeight(ex.volume)).toLocaleString()} {unitLabel}</span>
                 </div>
               ))}
             </div>

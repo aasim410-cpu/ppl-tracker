@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { WorkoutLog, InsertWorkoutLog, SessionNote, BodyWeight } from "@shared/schema";
+import { WorkoutLog, InsertWorkoutLog, SessionNote, BodyWeight, UserSettings, WorkoutSession } from "@shared/schema";
 
 export interface User {
   id: number;
@@ -35,6 +35,15 @@ export interface IStorage {
   getBodyWeights(userId: number): Promise<BodyWeight[]>;
   createBodyWeight(userId: number, date: string, weight: number): Promise<BodyWeight>;
   deleteBodyWeight(userId: number, id: number): Promise<void>;
+
+  // User settings
+  getUserSettings(userId: number): Promise<UserSettings>;
+  updateUserSettings(userId: number, data: { weeklyGoal?: number; unit?: string }): Promise<UserSettings>;
+
+  // Workout sessions
+  getOrCreateSession(userId: number, date: string, dayType: string): Promise<WorkoutSession>;
+  endSession(userId: number, date: string, dayType: string): Promise<WorkoutSession | null>;
+  getSession(userId: number, date: string, dayType: string): Promise<WorkoutSession | null>;
 }
 
 export class SqliteStorage implements IStorage {
@@ -98,6 +107,32 @@ export class SqliteStorage implements IStorage {
         date TEXT NOT NULL,
         weight REAL NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `);
+
+    // User settings table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        weekly_goal INTEGER NOT NULL DEFAULT 3,
+        unit TEXT NOT NULL DEFAULT 'kg',
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `);
+
+    // Workout sessions table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workout_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        day_type TEXT NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT,
+        duration_minutes INTEGER,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        UNIQUE(user_id, date, day_type)
       )
     `);
   }
@@ -246,6 +281,73 @@ export class SqliteStorage implements IStorage {
 
   async deleteBodyWeight(userId: number, id: number): Promise<void> {
     this.db.prepare("DELETE FROM body_weight WHERE id = ? AND user_id = ?").run(id, userId);
+  }
+
+  // User settings
+  async getUserSettings(userId: number): Promise<UserSettings> {
+    let row = this.db.prepare(
+      "SELECT id, user_id as userId, weekly_goal as weeklyGoal, unit FROM user_settings WHERE user_id = ?"
+    ).get(userId) as UserSettings | undefined;
+    if (!row) {
+      this.db.prepare("INSERT INTO user_settings (user_id) VALUES (?)").run(userId);
+      row = this.db.prepare(
+        "SELECT id, user_id as userId, weekly_goal as weeklyGoal, unit FROM user_settings WHERE user_id = ?"
+      ).get(userId) as UserSettings;
+    }
+    return row;
+  }
+
+  async updateUserSettings(userId: number, data: { weeklyGoal?: number; unit?: string }): Promise<UserSettings> {
+    // Ensure row exists
+    await this.getUserSettings(userId);
+    const fields: string[] = [];
+    const values: any[] = [];
+    if (data.weeklyGoal !== undefined) { fields.push("weekly_goal = ?"); values.push(data.weeklyGoal); }
+    if (data.unit !== undefined) { fields.push("unit = ?"); values.push(data.unit); }
+    if (fields.length > 0) {
+      values.push(userId);
+      this.db.prepare(`UPDATE user_settings SET ${fields.join(", ")} WHERE user_id = ?`).run(...values);
+    }
+    return this.getUserSettings(userId);
+  }
+
+  // Workout sessions
+  async getOrCreateSession(userId: number, date: string, dayType: string): Promise<WorkoutSession> {
+    let row = this.db.prepare(
+      "SELECT id, user_id as userId, date, day_type as dayType, start_time as startTime, end_time as endTime, duration_minutes as durationMinutes FROM workout_sessions WHERE user_id = ? AND date = ? AND day_type = ?"
+    ).get(userId, date, dayType) as WorkoutSession | undefined;
+    if (!row) {
+      const startTime = new Date().toISOString();
+      this.db.prepare(
+        "INSERT INTO workout_sessions (user_id, date, day_type, start_time) VALUES (?, ?, ?, ?)"
+      ).run(userId, date, dayType, startTime);
+      row = this.db.prepare(
+        "SELECT id, user_id as userId, date, day_type as dayType, start_time as startTime, end_time as endTime, duration_minutes as durationMinutes FROM workout_sessions WHERE user_id = ? AND date = ? AND day_type = ?"
+      ).get(userId, date, dayType) as WorkoutSession;
+    }
+    return row;
+  }
+
+  async endSession(userId: number, date: string, dayType: string): Promise<WorkoutSession | null> {
+    const row = this.db.prepare(
+      "SELECT id, user_id as userId, date, day_type as dayType, start_time as startTime, end_time as endTime, duration_minutes as durationMinutes FROM workout_sessions WHERE user_id = ? AND date = ? AND day_type = ?"
+    ).get(userId, date, dayType) as WorkoutSession | undefined;
+    if (!row) return null;
+    const endTime = new Date().toISOString();
+    const startMs = new Date(row.startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    const durationMinutes = Math.round((endMs - startMs) / 60000);
+    this.db.prepare(
+      "UPDATE workout_sessions SET end_time = ?, duration_minutes = ? WHERE id = ?"
+    ).run(endTime, durationMinutes, row.id);
+    return { ...row, endTime, durationMinutes };
+  }
+
+  async getSession(userId: number, date: string, dayType: string): Promise<WorkoutSession | null> {
+    const row = this.db.prepare(
+      "SELECT id, user_id as userId, date, day_type as dayType, start_time as startTime, end_time as endTime, duration_minutes as durationMinutes FROM workout_sessions WHERE user_id = ? AND date = ? AND day_type = ?"
+    ).get(userId, date, dayType) as WorkoutSession | undefined;
+    return row ?? null;
   }
 }
 

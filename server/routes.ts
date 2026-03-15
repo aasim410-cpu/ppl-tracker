@@ -199,6 +199,154 @@ export async function registerRoutes(server: Server, app: Express) {
     res.status(204).send();
   });
 
+  // User settings
+  app.get("/api/settings", requireAuth, async (req, res) => {
+    const settings = await storage.getUserSettings((req as any).userId);
+    res.json(settings);
+  });
+
+  app.put("/api/settings", requireAuth, async (req, res) => {
+    const { weeklyGoal, unit } = req.body;
+    const settings = await storage.updateUserSettings((req as any).userId, { weeklyGoal, unit });
+    res.json(settings);
+  });
+
+  // Streak & weekly goal stats
+  app.get("/api/stats/streak", requireAuth, async (req, res) => {
+    const userId = (req as any).userId;
+    const settings = await storage.getUserSettings(userId);
+    const allLogs = await storage.getWorkoutLogs(userId);
+
+    // Get all distinct workout dates
+    const allDates = [...new Set(allLogs.map(l => l.date))].sort();
+
+    // Current week (Mon-Sun)
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const sundayEnd = new Date(monday);
+    sundayEnd.setDate(monday.getDate() + 6);
+    sundayEnd.setHours(23, 59, 59, 999);
+
+    const mondayStr = monday.toISOString().slice(0, 10);
+    const sundayStr = sundayEnd.toISOString().slice(0, 10);
+
+    const thisWeekDates = allDates.filter(d => d >= mondayStr && d <= sundayStr);
+    const thisWeekCount = thisWeekDates.length;
+
+    // Calculate streak: consecutive weeks (going backward) where goal was met
+    let currentStreak = 0;
+    // Check if current week meets goal — if so, include it
+    let weekStart = new Date(monday);
+    // If current week already meets goal, count it
+    if (thisWeekCount >= settings.weeklyGoal) {
+      currentStreak = 1;
+      weekStart.setDate(weekStart.getDate() - 7);
+    } else {
+      // Start checking from previous week
+      weekStart.setDate(weekStart.getDate() - 7);
+    }
+
+    // Go backwards week by week
+    for (let i = 0; i < 52; i++) {
+      const ws = weekStart.toISOString().slice(0, 10);
+      const we = new Date(weekStart);
+      we.setDate(weekStart.getDate() + 6);
+      const weStr = we.toISOString().slice(0, 10);
+      const weekDates = allDates.filter(d => d >= ws && d <= weStr);
+      if (weekDates.length >= settings.weeklyGoal) {
+        currentStreak++;
+        weekStart.setDate(weekStart.getDate() - 7);
+      } else {
+        break;
+      }
+    }
+
+    res.json({ currentStreak, thisWeekCount, weeklyGoal: settings.weeklyGoal });
+  });
+
+  // Estimated 1RM endpoints
+  app.get("/api/stats/e1rm/:exerciseId", requireAuth, async (req, res) => {
+    const userId = (req as any).userId;
+    const exerciseId = req.params.exerciseId;
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const startDate = ninetyDaysAgo.toISOString().slice(0, 10);
+    const endDate = new Date().toISOString().slice(0, 10);
+
+    const logs = await storage.getWorkoutLogsByDateRange(userId, startDate, endDate);
+    const exerciseLogs = logs.filter(l => l.exerciseId === exerciseId);
+
+    // Group by date, find heaviest set per day, compute Epley 1RM
+    const dateMap = new Map<string, number>();
+    exerciseLogs.forEach(l => {
+      const e1rm = l.reps === 1 ? l.weight : l.weight * (1 + l.reps / 30);
+      const current = dateMap.get(l.date) || 0;
+      if (e1rm > current) dateMap.set(l.date, e1rm);
+    });
+
+    const result = Array.from(dateMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, e1rm]) => ({ date, e1rm: Math.round(e1rm * 10) / 10 }));
+
+    res.json(result);
+  });
+
+  app.get("/api/stats/e1rm-current/:exerciseId", requireAuth, async (req, res) => {
+    const userId = (req as any).userId;
+    const lastLog = await storage.getLastLog(userId, req.params.exerciseId);
+    if (!lastLog) return res.json({ e1rm: null });
+    const e1rm = lastLog.reps === 1 ? lastLog.weight : lastLog.weight * (1 + lastLog.reps / 30);
+    res.json({ e1rm: Math.round(e1rm * 10) / 10 });
+  });
+
+  // Workout sessions
+  app.post("/api/sessions/start", requireAuth, async (req, res) => {
+    const { date, dayType } = req.body;
+    if (!date || !dayType) return res.status(400).json({ error: "date and dayType required" });
+    const session = await storage.getOrCreateSession((req as any).userId, date, dayType);
+    res.json(session);
+  });
+
+  app.post("/api/sessions/end", requireAuth, async (req, res) => {
+    const { date, dayType } = req.body;
+    if (!date || !dayType) return res.status(400).json({ error: "date and dayType required" });
+    const session = await storage.endSession((req as any).userId, date, dayType);
+    if (!session) return res.status(404).json({ error: "No session found" });
+    res.json(session);
+  });
+
+  app.get("/api/sessions/:date/:dayType", requireAuth, async (req, res) => {
+    const session = await storage.getSession((req as any).userId, req.params.date, req.params.dayType);
+    res.json(session);
+  });
+
+  // Deload check
+  app.get("/api/stats/deload-check", requireAuth, async (req, res) => {
+    const userId = (req as any).userId;
+    const fourteenDaysAgo = new Date();
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+    const startDate = fourteenDaysAgo.toISOString().slice(0, 10);
+    const endDate = new Date().toISOString().slice(0, 10);
+
+    const logs = await storage.getWorkoutLogsByDateRange(userId, startDate, endDate);
+    if (logs.length === 0) return res.json({ suggest: false });
+
+    const avgRpe = logs.reduce((sum, l) => sum + l.rpe, 0) / logs.length;
+    if (avgRpe >= 8.5) {
+      res.json({
+        suggest: true,
+        avgRpe: Math.round(avgRpe * 10) / 10,
+        message: `Your average RPE has been ${(Math.round(avgRpe * 10) / 10)} over the last 2 weeks. Consider a deload week.`,
+      });
+    } else {
+      res.json({ suggest: false });
+    }
+  });
+
   // CSV Export
   app.get("/api/export/csv", requireAuth, async (req, res) => {
     const logs = await storage.getWorkoutLogs((req as any).userId);

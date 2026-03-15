@@ -9,9 +9,11 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Scale, Trash2, Plus, TrendingDown, TrendingUp } from "lucide-react";
+import { useUnit } from "@/lib/unit";
 import type { BodyWeight } from "@shared/schema";
 
 export default function BodyWeightPage() {
+  const { displayWeight, toKg, unitLabel } = useUnit();
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [weight, setWeight] = useState("");
   const { toast } = useToast();
@@ -26,11 +28,11 @@ export default function BodyWeightPage() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/bodyweight", { date, weight: Number(weight) });
+      await apiRequest("POST", "/api/bodyweight", { date, weight: toKg(Number(weight)) });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/bodyweight"] });
-      toast({ title: "Logged", description: `Body weight recorded: ${weight}kg` });
+      toast({ title: "Logged", description: `Body weight recorded: ${weight}${unitLabel}` });
       setWeight("");
     },
     onError: () => {
@@ -53,13 +55,13 @@ export default function BodyWeightPage() {
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(e => ({
       date: format(parseISO(e.date), "MMM d"),
-      weight: e.weight,
+      weight: displayWeight(e.weight),
     }));
 
   // Stats
-  const latest = entries[0]?.weight;
-  const previous = entries[1]?.weight;
-  const diff = latest && previous ? (latest - previous).toFixed(1) : null;
+  const latest = entries[0] ? displayWeight(entries[0].weight) : undefined;
+  const previous = entries[1] ? displayWeight(entries[1].weight) : undefined;
+  const diff = latest !== undefined && previous !== undefined ? (latest - previous).toFixed(1) : null;
 
   return (
     <div className="space-y-6">
@@ -82,7 +84,7 @@ export default function BodyWeightPage() {
             />
           </div>
           <div className="flex-1">
-            <Label className="text-xs text-muted-foreground mb-1.5 block">Weight (kg)</Label>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">Weight ({unitLabel})</Label>
             <Input
               type="number"
               min={0}
@@ -111,7 +113,7 @@ export default function BodyWeightPage() {
         <div className="grid grid-cols-2 gap-3">
           <Card className="p-3">
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Latest</p>
-            <p className="text-lg font-bold mt-0.5">{latest} kg</p>
+            <p className="text-lg font-bold mt-0.5">{latest} {unitLabel}</p>
           </Card>
           <Card className="p-3">
             <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Change</p>
@@ -119,7 +121,7 @@ export default function BodyWeightPage() {
               {diff ? (
                 <>
                   {Number(diff) < 0 ? <TrendingDown className="w-4 h-4 text-emerald-500" /> : Number(diff) > 0 ? <TrendingUp className="w-4 h-4 text-amber-500" /> : null}
-                  <p className="text-lg font-bold">{Number(diff) > 0 ? "+" : ""}{diff} kg</p>
+                  <p className="text-lg font-bold">{Number(diff) > 0 ? "+" : ""}{diff} {unitLabel}</p>
                 </>
               ) : (
                 <p className="text-lg font-bold text-muted-foreground">—</p>
@@ -144,7 +146,7 @@ export default function BodyWeightPage() {
                   domain={["dataMin - 1", "dataMax + 1"]}
                 />
                 <Tooltip
-                  formatter={(value: number) => `${value} kg`}
+                  formatter={(value: number) => `${value} ${unitLabel}`}
                   contentStyle={{
                     backgroundColor: "hsl(var(--card))",
                     border: "1px solid hsl(var(--border))",
@@ -183,7 +185,7 @@ export default function BodyWeightPage() {
               <div key={entry.id} className="flex items-center justify-between text-xs bg-muted/50 rounded-md px-2.5 py-1.5" data-testid={`bodyweight-entry-${entry.id}`}>
                 <span className="text-muted-foreground">{format(parseISO(entry.date), "EEE, MMM d, yyyy")}</span>
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{entry.weight} kg</span>
+                  <span className="font-medium">{displayWeight(entry.weight)} {unitLabel}</span>
                   <Button
                     variant="ghost"
                     size="sm"

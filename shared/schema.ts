@@ -47,6 +47,25 @@ export interface BodyWeight {
   weight: number;
 }
 
+// User settings
+export interface UserSettings {
+  id: number;
+  userId: number;
+  weeklyGoal: number;
+  unit: string;
+}
+
+// Workout sessions (duration tracking)
+export interface WorkoutSession {
+  id: number;
+  userId: number;
+  date: string;
+  dayType: string;
+  startTime: string;
+  endTime: string | null;
+  durationMinutes: number | null;
+}
+
 export const exercises: Exercise[] = [
   // PUSH DAY
   {
